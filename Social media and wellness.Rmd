@@ -1,0 +1,303 @@
+---
+title: "Social Media and Mental Health Exploratory Data Analysis"
+author: "Corey Land"
+date: "2025-11-25"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+This data analysis looks into exploring the relatonship between social media usage and mental health variables include: User ID, Age, Gender, Daily Screen Time,Sleep Quality, Stress Level, Days without Social Media,Exercise Frequency,Social Media Platform and Happiness Index
+
+# Load Libraries
+```{r libraries}
+library(tidyverse) 
+library(psych)
+library(corrr)
+library(ggcorrplot)
+library(FactoMineR)
+library(factoextra)
+library(corrplot)
+library(GGally)
+library(plotly)
+library(aplpack)
+library(scatterplot3d)
+library(asbio)
+library(ggfortify) 
+library(ggrepel)
+```
+
+# Load Dataset
+```{r load-data}
+df <- read.csv("Mental_Health_and_Social_Media_Balance_Dataset.csv", stringsAsFactors = TRUE)
+```
+Dataset consists of 500 observations and 10 variables
+
+```{r dataset-info}
+# View first 6 rows of data
+head(df)
+
+# Rename columns for simplicity
+df <- df %>%
+  rename(
+    Screen_Time      = Daily_Screen_Time.hrs.,
+    Sleep_Quality    = Sleep_Quality.1.10.,
+    Stress_Level     = Stress_Level.1.10.,
+    Days_No_Social   = Days_Without_Social_Media,
+    Exercise_Freq    = Exercise_Frequency.week.,
+    Social_Media     = Social_Media_Platform,
+    Happiness_Level  = Happiness_Index.1.10.
+  )
+
+# Check contents of data 
+str(df)
+
+# View Summary Statistics
+summary(df)
+```
+
+```{r data-cleaning}
+# Check to see if there are missing values in dataset
+colSums(is.na(df))
+# There are no missing values in data
+
+# Check for duplicats in data
+sum(duplicated(df))
+# No duplicates found in dataset
+```
+
+Let's visual explore the numerical variables and the categorical variables 
+``` {r variable-graphs}
+# Numerical variables
+num_vars <- df %>% select(where(is.numeric))
+
+# View histograms
+if(ncol(num_vars) > 0) {
+  num_vars %>%
+    gather(key="variable", value="value") %>%
+    ggplot(aes(x=value)) +
+    geom_histogram(fill="blue", color="black", bins=15) +
+    theme_minimal() +
+    facet_wrap(~variable, scales="free") +
+    labs(title="Distribution of Numerical Variables")
+}
+
+# Categorical variables
+cat_vars <- df %>%
+  select(where(is.factor)) %>%
+  select(-User_ID)
+
+# View count and bar plots
+if(ncol(cat_vars) > 0) {
+  for(v in names(cat_vars)){
+    print(df %>% group_by(.data[[v]]) %>% summarise(count= n()))
+    p <- ggplot(df, aes_string(x=v, fill=v)) +
+      geom_bar() +
+      theme_minimal() +
+      labs(title=paste("Count of", v))
+    
+    print(p)
+  }
+}
+```
+
+Let's Look at Outlier by using boxplots and Mahalanobis Distance
+
+``` {r Outliers}
+# Boxplots are a way to visually see min,1st quartile, median, 3rd quartile, max and any potential outliers
+if(ncol(num_vars) > 0) {
+  num_vars %>%
+    pivot_longer(cols = everything()) %>%
+    ggplot(aes(x = name, y = value, fill = name)) +
+    geom_boxplot(outlier.colour = "red", alpha = 0.6) +
+    labs(title = "Boxplots of Numeric Variables", x = "Variable", y = "Value") +
+    theme_minimal(base_size = 14) +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+    guides(fill = "none")
+}
+
+## Daily Screen Time, Exercise Frequency and Stress Level seems to have outliers. This shows outliers of for each individual variable of a user.
+
+## We can use Mahalanobis Distance to determine which users based off of all variables are considered outliers
+
+## Let's create new dataframe for Mahlanobis Distance
+df_2 <- num_vars
+
+# Standardize data
+df_scaled <- scale(df_2)
+
+# Compute Mahlanobis Distance
+center <- colMeans(df_scaled)
+cov_matrix <- cov(df_scaled)
+mahal <- mahalanobis(df_scaled, center, cov_matrix)
+
+# Determine outliers
+threshold <- qchisq(0.975, df = ncol(df_scaled))
+outlier_flag <- mahal > threshold
+table(outlier_flag)
+
+# Create dataframe for plotting
+df_plot <- data.frame(
+  ID = df$User_ID,
+  Index = 1:nrow(df_scaled),
+  Mahalanobis_Dis = mahal,
+  Outlier = outlier_flag
+)
+
+# Visualize
+outliers <- df_plot[df_plot$Outlier,]
+
+ggplot(df_plot, aes(x = Index, y = Mahalanobis_Dis, color = Outlier)) +
+  geom_point(size = 2) +
+  geom_hline(yintercept = threshold, linetype="dashed") +
+  geom_text_repel(data = outliers, aes(label = ID), size = 3) +
+  labs(title="Mahalanobis Distance Outlies with Users IDs", x = "Observation Index", y="Mahalanobis Distance") +
+  theme_minimal()
+
+# 11 Users are identified as Outliers at the 97.5% threshold: U040,U013, U011, U095, U249, U153, U216, U264, U450, U494, U490
+```
+
+Let's now find relationships/associations between numeric variables
+
+``` {r Correlation Analysis}
+### Check correlation between numeric variables
+# Get correlation matrix
+cor_matrix <- cor(num_vars)
+
+# Look at ScatterPlot Matrix
+pairs(num_vars)
+
+# Correlation heatmap
+ggcorrplot(cor_matrix, lab = TRUE, hc.order = TRUE, title = "Correlation Heatmap")
+
+# Happiness Index and Daily Screen Time = -0.71 (strong negative correlation)
+# Ex: As Happiness increases daily screen time decreases
+
+# Sleep Quality and Daily Screen Time = -0.76 (Strong negative correlation)
+# As sleep quality increases, daily screen time decreases
+
+# Stress Level and Daily Screen Time = 0.74 (Strong positive correlation)
+# As stress level increases, daily screen time increases
+
+# Happiness and Sleep Quality = 0.68 (strong positive correlation)
+# As happiness increases, sleep quality increases also
+
+# Happiness and Stress Level = -0.74 (strong negative correlation)
+# as happiness increases, stress levels decreases
+
+# Sleep Quality and Stress Level = - 0.58 (Moderately strong positive correlation)
+# As sleep quality increases, stress levels decreases
+
+# There is correlation among the variables but majority are not correlated
+# Sleep, Stress and Screen Time have high amount of impact
+# Age does not correlate much with any of the variables
+
+# Dataset has multicollinearity since more than two variables have correlations |r| > 7.
+```
+
+Since dataset has multicollinearity let's apply Principal Component Analysis.
+
+Principal Component Analysis is used to reduce the data to fewer dimensions that represent majority of the variation in the data.
+
+``` {r PCA}
+### PRINCIPAL COMPONENT ANALYSIS
+df_pc <- num_vars
+
+# Since we have variables that are highly correlated let's use prcomp for PCA
+df_pc_result <- prcomp(df_pc, scale. = TRUE)
+
+# View PCA
+summary(df_pc_result)
+
+# PC1 explains 44.46% of variance, PC2 15.32%, PC3 14.25%, PC4 13.34% => 87.36% of total variance in dataset
+# 4 Principal Components seem to work best here.
+
+# Let's look a the eigenvalues and a scree plot to determine the necessary principal components
+
+# access loadings
+loadings <- df_pc_result$rotation
+print(loadings)
+
+
+# PC1 describes 44.46% of total variance. It is dominated by Sleep Quality (0.49) and Happiness (0.50) with negative loadings on Screen Time (-0.52) and Stress Level (-0.49). This suggest users tend to have good sleep quality and happiness along with have less amount of screen time and stress levels.
+
+# PC2 describes 15.32% of total variance. It is dominated heavily by Age (0.71) and Exercise Frequency (0.65) suggesting that users who are older also exercise more frequently.
+
+# PC3 describes 14.25% of total variance. It is dominated by Days without Social Media (-0.94) suggesting users which higher PC3 scores spend more time on social media and users with lower scores go more days without social media.
+
+# PC4 describes 13.34% of total variance. It is dominated by exercise frequency (0.67) and Age (-0.70). This suggests that younger users tend to exercise more versus older users who exercise less.
+
+
+# Extract standard deviation 
+sdev <- df_pc_result$sdev
+# calculate eigenvalues
+eigenvalues <- sdev^2
+# print eigenvalues
+print(eigenvalues)
+
+# Based on Kisen Criterion: eigenvalue > 1
+# PC1 = 3.11, PC2 = 1.07, PC3 = 0.99, PC4 = 0.93
+
+# Lets' look at scree plot
+fviz_eig(df_pc_result, addlabes = TRUE, barfill = "blue", main = "Scree Plot - PCA")
+# Scree plot looks as if 4 Principal Components work 
+
+# Let's look at seperate pca plots for users and variables
+
+# users
+fviz_pca_ind(df_pc_result,
+             col.ind = "blue",
+             alpha.ind = 0.6,
+             title = "PCA - Users")
+
+# Plot for variables
+fviz_pca_var(df_pc_result,
+             repel = TRUE,
+             col.var = "red",
+             title = "PCA - Variables"
+)
+
+# Create DataFrame of PC's for plots
+pc_df <- as.data.frame(df_pc_result$x[, 1:4]) %>%
+  mutate(ID = df$User_ID)
+
+# Let's look at Scatterplot for each PC
+# Only include the first 4 PCs
+ggpairs(pc_df[, 1:4],
+        upper = list(continuous = wrap("points", alpha = 0.6, size = 1.5)),
+        lower = list(continuous = wrap("points", alpha = 0.6, size = 1.5)),
+        diag = list(continuous = "densityDiag"))
+```
+
+Lastly let's check to see if there are any unobservable factors that are influencing our variables
+
+Perform Factor Analysis
+
+``` {r - Factor Analysis}
+# Now let's see if there are any unobservables factors that influence variables
+df_fa <- num_vars
+
+# Determine the number of factors
+fa1 <- factanal(df_fa, factors = 1, rotation = "varimax")
+print(fa1)
+# p-value is extremely small try 2
+
+fa2 <- factanal(df_fa, factors = 2, rotation = "varimax")
+print(fa2)
+# p-value is 0.0233, still small so let's try 3
+
+fa3 <- factanal(df_fa, factors = 3, rotation = "varimax")
+print(fa3)
+# p-value is 0.128, seems significant enough, let's use 3 factors
+
+# Choose 3 factor model
+names(df_fa) <- c("Stress", "Happiness", "Screen", "Sleep", "NoSocial", "Exercise", "Age")
+fa_results <- psych::fa(r = df_fa, nfactors = 3, rotate = "varimax")
+fa.diagram(fa_results)
+
+# Add factors scores to dataframe
+fa.scores <- fa_results$scores
+df_full_fa <- bind_cols(df_fa, as.data.frame(fa.scores))
+```
