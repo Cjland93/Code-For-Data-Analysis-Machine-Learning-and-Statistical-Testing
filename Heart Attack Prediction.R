@@ -1,0 +1,210 @@
+# Following Dataset consists of 13 attributes
+# Age, Gender (male = 1, female = 0), cp (Constrictive pericarditis)
+# same as chest pain, resting blood pressure, 
+# cholesterol, fasting blood sugar, resting electrocardiogram results
+# max heart rate, exercise induced angina (1 = yes; 0 = no),
+# Oldpeak: ST depression induced by exercise relative to rest, 
+# Slope: the slope of the peak exercise ST segment,
+# number of major blood vessels, and AHD
+
+# 1 target variable: We are interested in determining if a person has
+# heart disease based on these 13 attributes (all are numerical)
+
+# Load Libraries
+library(ISLR)
+library(ggplot2)
+library(pROC)
+library(GGally)
+library(corrr)
+library(plotly)
+library(corrplot)
+library(dplyr)
+library(tidyr)
+
+# Load Data
+setwd("C:/Users/shirl/OneDrive/Desktop/R")
+
+df <- read.csv("Heart Attack Data Set.csv")
+
+# Dataset has 303 observations with 14 variables including target
+
+# check first few rows of data
+head(df)
+
+# Check contents of data
+str(df)
+
+# all variables are numeric
+
+
+# Check shape/dimensions of data
+dim(df)
+
+# Check for missing values
+colSums(is.na(df))
+
+# data does not have any missing values
+
+# remove any duplicates if there are any
+df <- df[!duplicated(df), ]
+
+# Dataset removed 1 duplicate, now there are 302 observations
+
+# Check summary statistics
+summary(df)
+
+# average age is 54.42 years, with ages ranging from 29 to 77
+
+# Let's look at our numeric variables
+num_vars <- df %>% select(where(is.numeric)) %>%
+  select(-target)
+
+# Histograms for all numeric variables
+if(ncol(num_vars) > 0){
+  num_vars %>%
+    pivot_longer(cols = everything(), names_to = "variable", values_to = "value") %>%
+    ggplot(aes(x=value)) +
+    geom_histogram(fill="skyblue", color="black", bins=15) +
+    facet_wrap(~variable, scales="free") +
+    theme_minimal() +
+    labs(title="Distribution of Numeric Variables")
+}
+
+# Let's look at boxplots for numeric variables
+num_vars %>%
+  pivot_longer(cols = everything()) %>%
+  ggplot(aes(x = name, y = value, fill = name)) +
+  geom_boxplot(outlier.colour = "red", alpha = 0.6) +
+  labs(title = "Boxplots of Numeric Variables", x = "Variable", y = "Value") +
+  theme_minimal(base_size = 14) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1), plot.margin = margin(10, 10, 20, 10)) +
+  guides(fill = "none") 
+
+# There looks to be a good amount of outliers in the data
+
+## Let's now look to see if there is correlation among variables
+# View Correlation Matrix
+cor_matrix <- cor(num_vars)
+print(cor_matrix)
+
+
+# Looking at the correlations we see that no variables is correlated strong with one another
+# no multicollinearity
+
+
+## Prepare for logistic regression
+# Split data into train and test sets
+set.seed(42) # reproducibility
+
+
+sample_index <- sample(c(TRUE, FALSE), nrow(df), replace = TRUE, prob = c(0.7, 0.3))
+train <- df[sample_index, ]
+test <- df[!sample_index, ]
+
+cat("Training set size:", nrow(train), "\n")
+cat("Testing set size:", nrow(test), "\n")
+
+
+# 208 observations are used to train model
+# 94 are used to test model
+
+
+# Ensure categorical codes are factors
+train <- train %>%
+  mutate(
+    sex     = factor(sex),
+    cp      = factor(cp),
+    fbs     = factor(fbs),
+    restecg = factor(restecg),
+    exang   = factor(exang),
+    slope   = factor(slope),
+    ca      = factor(ca),
+    thal    = factor(thal)
+  )
+# Scale all continuous predictors at once
+train <- train %>%
+  mutate(across(c(age, trestbps, chol, thalach, oldpeak), scale))
+
+
+# Do the same for test
+test <- test %>%
+  mutate(
+    sex     = factor(sex),
+    cp      = factor(cp),
+    fbs     = factor(fbs),
+    restecg = factor(restecg),
+    exang   = factor(exang),
+    slope   = factor(slope),
+    ca      = factor(ca),
+    thal    = factor(thal)
+  )
+
+test <- test %>%
+  mutate(across(c(age, trestbps, chol, thalach, oldpeak), scale))
+
+### Fit Logistic Model
+model <- glm(target ~ age + sex + cp + trestbps + chol + fbs + restecg + thalach + exang + oldpeak + slope + ca + thal, data = train, family = "binomial")
+
+# view model summary
+summary(model)
+
+# See that there are alot of dummy variables
+
+# Interpret Coefficients
+# convert coefficients to odd ratios
+exp(coef(model))
+
+
+
+# Make predictions on test data
+# predict probabilities
+pred_prob <- predict(model, newdata = test, type = "response")
+
+# Convert probabilities to class labels (1 = "Yes", 0 = "No")
+pred_class <- ifelse(pred_prob > 0.5, "1", "0")
+
+
+# Add predictions to test set
+test$pred_prob <- pred_prob
+test$pred_class <- pred_class
+
+head(test)
+
+# Visualize Predictions
+# Plot predicted by actual
+ggplot(test, aes(x = pred_prob, fill = target)) +
+  geom_density(alpha = 0.6) +
+  labs(title = "Predicted Probability Distribution by Heart Disease Status",
+       x = "Predicted Probability of Having Heart Disease", y = "Density") +
+  theme_minimal()
+
+# Evaluate Model Performance
+# Confusion Matrix
+conf_matrix <- table(Predicted = test$pred_class, Actual = test$target)
+conf_matrix
+
+# Accuracy
+accuracy <- mean(test$pred_class == test$target)
+cat("Model Accuracy:", round(accuracy, 4), "\n")
+
+# Model is 76.6% accurate
+# correctly classifies about 77% of all cases, overall has good accurracy but can be better
+
+# Sensitivity: TP / (TP + FN) = 45 / (45 + 9) = 83.33%
+# model correctly identifies about 83% of Heart Attacks
+
+# Specificity: TN / (TN + FP) = 27 / (27 + 13) = 67.5% 
+# model correctly identifies 68% of non heart attacks
+# ROC Curve and AUC
+roc_curve <- roc(test$target, pred_prob)
+
+# Plot ROC Curve
+plot(roc_curve, col = "blue", lwd = 2, main = "ROC Curve")
+auc_value <- auc(roc_curve)
+cat("AUC:", round(auc_value, 4), "\n")
+
+# AUC = 84.63
+
+# Model has a 84.6% chance of correctly distinguishing 
+# between a randomly chosen person for heart attack and 
+# non heart attack -> really good discriminatory power
